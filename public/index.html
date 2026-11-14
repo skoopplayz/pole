@@ -49,7 +49,7 @@
           <div class="aurora aurora-one"></div><div class="aurora aurora-two"></div><div class="aurora aurora-three"></div><div class="stars"></div>
           <div class="start-topline"><time id="clock">00:00</time></div>
           <div class="start-content">
-            <div class="hero"><h1 class="brand-wordmark"><img src="/polestar-logo.png" alt="Polestar" /></h1><p class="greeting" id="greeting">Good evening</p></div>
+            <div class="hero"><h1 class="brand-wordmark"><img src="/polestar-logo.svg" alt="Polestar" /></h1><p class="greeting" id="greeting">Good evening</p></div>
             <form class="start-search" id="start-search-form"><span><i data-lucide="search"></i></span><input id="start-search-input" placeholder="Search or enter URL" autocomplete="off" /><kbd>↵</kbd></form><div class="search-suggestions" id="search-suggestions"></div>
             <div class="quick-access" aria-label="Quick access"><button data-url="https://discord.com/app"><span class="quick-icon discord">☁</span><span>Discord</span></button><button data-url="https://youtube.com"><span class="quick-icon youtube">▶</span><span>YouTube</span></button><button data-url="https://github.com"><span class="quick-icon github">⌘</span><span>GitHub</span></button><button data-url="https://reddit.com"><span class="quick-icon reddit">●</span><span>Reddit</span></button><button data-url="https://google.com"><span class="quick-icon google">G</span><span>Google</span></button></div>
             <section class="recent-section" aria-labelledby="recent-heading"><div class="recent-heading"><h2 id="recent-heading">Recently visited</h2><button id="clear-recents">Clear</button></div><div class="recent-grid" id="recent-grid"></div></section>
@@ -62,8 +62,27 @@
     <dialog class="settings-modal" id="settings-modal"><form method="dialog" class="settings-card" id="settings-form">
       <div class="settings-heading"><div><h2>Settings</h2><p>Shape Polestar around your browsing rhythm.</p></div><button class="icon-button" value="cancel" aria-label="Close settings">×</button></div>
       <div class="settings-tabs"><button type="button" class="settings-tab active" data-pane="general">General</button><button type="button" class="settings-tab" data-pane="appearance">Appearance</button><button type="button" class="settings-tab" data-pane="privacy">Privacy</button></div>
-      <div class="settings-pane active" data-pane="general"><label>Search engine<select id="search-engine"><option value="duckduckgo">DuckDuckGo</option><option value="google">Google</option><option value="brave">Brave Search</option></select></label><label>Proxy transport<select id="proxy-transport"><option value="libcurl">Libcurl</option><option value="epoxy">Epoxy</option></select></label><label>Wisp server URL<input id="wisp-url" type="url" placeholder="ws://localhost:8080/wisp/" /></label><p class="connection-state" id="connection-state"><i></i> Checking Polestar Wisp status…</p></div>
-      <div class="settings-pane" data-pane="appearance"><p class="setting-title">Theme</p><div class="theme-grid"><label class="theme-card aurora-card"><input name="theme" value="aurora" type="radio" checked><span></span><strong>Aurora</strong></label><label class="theme-card midnight-card"><input name="theme" value="midnight" type="radio"><span></span><strong>Midnight</strong></label><label class="theme-card ember-card"><input name="theme" value="ember" type="radio"><span></span><strong>Ember</strong></label><label class="theme-card frost-card"><input name="theme" value="frost" type="radio"><span></span><strong>Frost</strong></label></div><label class="toggle-row"><span><strong>Glass effects</strong><small>Use translucent surfaces and background blur.</small></span><input id="glass-toggle" type="checkbox" checked /><b></b></label><label class="toggle-row"><span><strong>Reduced motion</strong><small>Pause ambient aurora movement.</small></span><input id="motion-toggle" type="checkbox" /><b></b></label></div>
+      <div class="settings-pane active" data-pane="general">
+        <label>Search engine<select id="search-engine"><option value="duckduckgo">DuckDuckGo</option><option value="google">Google</option><option value="brave">Brave Search</option></select></label>
+        <label>Proxy transport<select id="proxy-transport"><option value="libcurl">Libcurl</option><option value="epoxy">Epoxy</option></select></label>
+        <p class="setting-help">Both engines use Wisp. Switching reloads open pages to replace existing network connections.</p>
+        <label>Wisp server URL<input id="wisp-url" type="url" placeholder="wss://your-host.example/wisp/" /></label>
+        <div class="connection-actions"><button type="button" class="secondary-button" id="use-hosted-wisp">Use this host’s Wisp</button><button type="button" class="secondary-button" id="retry-connection">Retry connection</button></div>
+        <p class="connection-state" id="connection-state" role="status"><i></i> Checking Polestar Wisp status…</p>
+      </div>
+      <div class="settings-pane" data-pane="appearance">
+        <p class="setting-title">Theme</p>
+        <div class="theme-grid">
+          <label class="theme-card aurora-card"><input name="theme" value="aurora" type="radio" checked><span></span><strong>Aurora</strong></label>
+          <label class="theme-card midnight-card"><input name="theme" value="midnight" type="radio"><span></span><strong>Midnight</strong></label>
+          <label class="theme-card ember-card"><input name="theme" value="ember" type="radio"><span></span><strong>Ember</strong></label>
+          <label class="theme-card frost-card"><input name="theme" value="frost" type="radio"><span></span><strong>Frost</strong></label>
+          <label class="theme-card dark-card"><input name="theme" value="dark" type="radio"><span></span><strong>Dark · Black</strong></label>
+          <label class="theme-card light-card"><input name="theme" value="light" type="radio"><span></span><strong>Light · White</strong></label>
+        </div>
+        <label class="toggle-row"><span><strong>Glass effects</strong><small>Use translucent surfaces and background blur.</small></span><input id="glass-toggle" type="checkbox" checked /><b></b></label>
+        <label class="toggle-row"><span><strong>Reduced motion</strong><small>Pause ambient aurora movement.</small></span><input id="motion-toggle" type="checkbox" /><b></b></label>
+      </div>
       <div class="settings-pane" data-pane="privacy"><label class="toggle-row"><span><strong>Tab cloaking</strong><small>Use a neutral document title and favicon.</small></span><input id="cloak-toggle" type="checkbox" /><b></b></label><label class="toggle-row"><span><strong>Remember recent pages</strong><small>Keep the latest sites on the Polestar start page.</small></span><input id="recents-toggle" type="checkbox" checked /><b></b></label><button type="button" class="danger-button" id="clear-data">Clear local browser data</button></div>
       <div class="settings-actions"><button value="cancel" class="secondary-button">Cancel</button><button value="default" id="save-settings" class="primary-button">Save changes</button></div>
     </form></dialog>

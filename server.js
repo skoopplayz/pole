@@ -10,6 +10,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 const app = express();
 const port = Number(process.env.PORT || 8080);
+const host = process.env.HOST || "0.0.0.0";
+const defaultWispUrl = process.env.WISP_URL || "";
+if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Polestar: PORT must be between 1 and 65535");
+if (defaultWispUrl && !/^wss?:\/\//.test(defaultWispUrl)) throw new Error("Polestar: WISP_URL must use ws:// or wss://");
 const dirOf = (specifier) => path.dirname(require.resolve(specifier));
 
 app.disable("x-powered-by");
@@ -27,7 +31,11 @@ app.use("/libcurl/", express.static(dirOf("@mercuryworkshop/libcurl-transport"))
 app.use("/epoxy/", express.static(dirOf("@mercuryworkshop/epoxy-transport")));
 app.use("/lucide/", express.static(path.join(dirOf("lucide"), "..", "umd")));
 app.use("/fonts/geist/", express.static(path.join(__dirname, "node_modules/geist/dist/fonts/geist-sans")));
-app.use(express.static(path.join(__dirname, "public"), { extensions: ["html"] }));
+app.get("/api/config", (_request, response) => {
+  response.setHeader("Cache-Control", "no-store");
+  response.json({ wispUrl: defaultWispUrl });
+});
+app.use(express.static(path.join(__dirname, "public"), { extensions: ["html"], maxAge: 0 }));
 
 app.get("/api/favicon", async (request, response) => {
   const domain = String(request.query.domain || "");
@@ -46,6 +54,14 @@ app.get("/health", (_request, response) => {
 });
 
 const server = http.createServer(app);
+wisp.options.allow_private_ips = false;
+wisp.options.allow_loopback_ips = false;
+wisp.options.dns_result_order = "ipv4first";
+const sockets = new Set();
+server.on("connection", (socket) => {
+  sockets.add(socket);
+  socket.on("close", () => sockets.delete(socket));
+});
 server.on("upgrade", (request, socket, head) => {
   const requestPath = new URL(request.url ?? "/", "http://localhost").pathname;
   if (requestPath === "/wisp/") {
@@ -56,7 +72,16 @@ server.on("upgrade", (request, socket, head) => {
   socket.end();
 });
 
-server.listen(port, () => {
+server.listen(port, host, () => {
   console.log(`✦ Polestar is ready at http://localhost:${port}`);
-  console.log(`  Wisp transport mounted at ws://localhost:${port}/wisp/`);
+  console.log(`  Polestar listening on ${host}:${port}; Wisp mounted at /wisp/`);
 });
+
+function shutdown() {
+  console.log("Polestar is shutting down");
+  server.close(() => process.exit(0));
+  for (const socket of sockets) socket.destroy();
+  setTimeout(() => process.exit(1), 10000).unref();
+}
+process.once("SIGTERM", shutdown);
+process.once("SIGINT", shutdown);

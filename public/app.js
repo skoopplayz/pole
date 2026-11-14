@@ -1,3 +1,5 @@
+import { createTransport, normalizeWispUrl, probeWisp } from "./transport.js";
+
 const elements = {
   addressForm: document.querySelector("#address-form"), address: document.querySelector("#address-input"), back: document.querySelector("#back-button"), forward: document.querySelector("#forward-button"), reload: document.querySelector("#reload-button"), bookmarkPage: document.querySelector("#bookmark-page"), splitButton: document.querySelector("#split-button"), fullscreenButton: document.querySelector("#fullscreen-button"),
   tabs: document.querySelector("#tab-list"), frames: document.querySelector("#frames"), startPage: document.querySelector("#start-page"), newTab: document.querySelector("#new-tab-button"), sidebar: document.querySelector("#sidebar"), sidebarToggle: document.querySelector("#sidebar-toggle"),
@@ -7,7 +9,7 @@ const elements = {
 };
 
 const SEARCH_ENGINES = { duckduckgo: "https://duckduckgo.com/?q=", google: "https://www.google.com/search?q=", brave: "https://search.brave.com/search?q=" };
-const DEFAULT_SETTINGS = { transport: "libcurl", searchEngine: "duckduckgo", wispUrl: "wss://wisp.mercurywork.shop/", cloak: false, theme: "aurora", glass: true, reducedMotion: false, recents: true };
+const DEFAULT_SETTINGS = { transport: "libcurl", searchEngine: "duckduckgo", wispUrl: "", cloak: false, theme: "aurora", glass: true, reducedMotion: false, recents: true };
 function readStored(key, fallback) { try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; } }
 function escapeText(value) { return String(value).replace(/[&<>"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[character])); }
 let settings = { ...DEFAULT_SETTINGS, ...readStored("polestar-settings", {}) };
@@ -23,7 +25,7 @@ function resolveInput(value) { const trimmed = value.trim(); if (!trimmed) retur
 function labelForUrl(url) { try { return new URL(url).hostname.replace(/^www\./, "") || "New Tab"; } catch { return "New Tab"; } }
 function faviconForUrl(url) { try { return `/api/favicon?domain=${encodeURIComponent(new URL(url).hostname)}`; } catch { return ""; } }
 function updateDocumentCloak() { document.title = settings.cloak ? "New Tab" : "Polestar — Private browsing, beautifully arranged"; }
-function applyAppearance() { document.body.dataset.theme = settings.theme; document.body.classList.toggle("no-glass", !settings.glass); document.body.classList.toggle("reduce-motion", settings.reducedMotion); document.querySelector("meta[name=theme-color]").content = settings.theme === "frost" ? "#1d2640" : "#08080c"; }
+function applyAppearance() { document.body.dataset.theme = settings.theme; document.body.classList.toggle("no-glass", !settings.glass); document.body.classList.toggle("reduce-motion", settings.reducedMotion); document.querySelector("meta[name=theme-color]").content = settings.theme === "light" ? "#ffffff" : settings.theme === "dark" ? "#000000" : settings.theme === "frost" ? "#1d2640" : "#08080c"; }
 function setStartPlaceholder() { const name = settings.searchEngine === "duckduckgo" ? "DuckDuckGo" : settings.searchEngine === "google" ? "Google" : "Brave"; elements.startSearch.placeholder = `Search with ${name} or enter URL`; }
 function updateStatus(ready) { elements.status.classList.toggle("ready", ready); elements.status.querySelector("span").textContent = ready ? "Wisp Connected · Scramjet Ready" : "Connecting to Polestar Wisp…"; elements.connection.classList.toggle("ready", ready); elements.connection.lastChild.textContent = ready ? " Wisp connected — Scramjet transport ready" : " Checking Polestar Wisp status…"; }
 function renderIcons() { window.lucide?.createIcons({ icons: window.lucide.icons, attrs: { "stroke-width": 1.8 } }); }
@@ -65,23 +67,56 @@ function renderBookmarks() {
 }
 function rememberPage(url) { if (!settings.recents || !/^https?:/i.test(url)) return; const title = labelForUrl(url); recentPages = [{ url, title }, ...recentPages.filter((page) => page.url !== url)].slice(0, 12); localStorage.setItem("polestar-recents", JSON.stringify(recentPages)); renderRecents(); }
 
-async function createTransport(config) {
-  const module = config.transport === "epoxy" ? await import("/epoxy/index.mjs") : await import("/libcurl/index.mjs");
-  const transport = new module.default({ wisp: config.wispUrl });
-  await transport.init();
-  return transport;
+let engineInitialization;
+async function initializeEngine() {
+  if (engineInitialization) return engineInitialization;
+  engineInitialization = startEngine().finally(() => { engineInitialization = null; });
+  return engineInitialization;
 }
 
-async function initializeEngine() {
+async function startEngine() {
   try {
+    if (!window.isSecureContext || !navigator.serviceWorker) throw new Error("Open Polestar over HTTPS or localhost to enable Scramjet.");
+    if (!settings.wispUrl) {
+      const response = await fetch("/api/config", { cache: "no-store" });
+      if (!response.ok) throw new Error("Restart the Polestar server to load its deployment configuration.");
+      settings.wispUrl = normalizeWispUrl((await response.json()).wispUrl);
+    } else settings.wispUrl = normalizeWispUrl(settings.wispUrl);
     const registration = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+    const updatingWorker = registration.installing || registration.waiting;
+    if (updatingWorker && updatingWorker.state !== "activated") {
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => finish(new Error("Service worker update timed out. Reload Polestar to retry.")), 20000);
+        const finish = (error) => {
+          clearTimeout(timeout);
+          updatingWorker.removeEventListener("statechange", check);
+          if (error) reject(error);
+          else resolve();
+        };
+        const check = () => {
+          if (updatingWorker.state === "activated") finish();
+          else if (updatingWorker.state === "redundant") finish(new Error("Service worker update failed. Reload Polestar to retry."));
+        };
+        updatingWorker.addEventListener("statechange", check);
+        check();
+      });
+    }
     await navigator.serviceWorker.ready;
     if (!navigator.serviceWorker.controller) await new Promise((resolve) => navigator.serviceWorker.addEventListener("controllerchange", resolve, { once: true }));
     const transport = await createTransport(settings);
     const api = window.$scramjetController; const utils = window.$scramjetUtils;
     controller = new api.Controller({ serviceworker: navigator.serviceWorker.controller || registration.active, transport, config: { scramjetPath: "/scram/scramjet.js", wasmPath: "/scram/scramjet.wasm", injectPath: "/controller/controller.inject.js" } });
-    await controller.wait(); engineReady = true; window.polestarUtils = utils; checkWisp(); tabs.filter((tab) => !tab.isNewTab).forEach((tab) => navigateTab(tab, tab.url));
-  } catch (error) { console.error("Polestar engine failed to initialize", error); updateStatus(false); }
+    await controller.wait(); engineReady = true; window.polestarUtils = utils; checkWisp();
+    const selected = activeTabId;
+    tabs.filter((tab) => !tab.isNewTab).forEach((tab) => navigateTab(tab, tab.url));
+    switchTab(selected);
+  } catch (error) { engineReady = false; console.error("Polestar engine failed to initialize", error); showConnectionError(error); }
+}
+
+function showConnectionError(error) {
+  updateStatus(false);
+  elements.status.querySelector("span").textContent = "Connection unavailable · open Settings to retry";
+  elements.connection.lastChild.textContent = ` ${error.message || error}`;
 }
 
 function createTab(url = null) { const tab = { id: `tab-${++tabCount}`, url, title: url ? labelForUrl(url) : "New Tab", frame: null, isNewTab: !url }; tabs.push(tab); switchTab(tab.id); if (url) navigateTab(tab, url); return tab; }
@@ -89,7 +124,7 @@ function switchTab(id) { const previous = activeTabId; if (id === splitTabId) sp
 function closeTab(id) { const index = tabs.findIndex((tab) => tab.id === id); if (index === -1) return; const [tab] = tabs.splice(index, 1); tab.frame?.element.remove(); if (activeTabId === id) { const next = tabs[index] || tabs[index - 1] || createTab(); if (next.id !== activeTabId) switchTab(next.id); } switchTab(activeTabId); }
 function renderTabs() { elements.tabs.replaceChildren(...tabs.map((tab) => { const button = document.createElement("button"); button.className = `tab-item ${tab.id === activeTabId ? "active" : ""}`; button.draggable = true; button.dataset.tabId = tab.id; const favicon = document.createElement("span"); favicon.className = "tab-favicon"; if (tab.isNewTab) favicon.innerHTML = '<i data-lucide="sparkles"></i>'; else { const image = document.createElement("img"); image.src = faviconForUrl(tab.url); image.alt = ""; image.onerror = () => { favicon.innerHTML = '<i data-lucide="globe-2"></i>'; renderIcons(); }; favicon.append(image); } const title = document.createElement("span"); title.className = "tab-title"; title.textContent = tab.title; const close = document.createElement("span"); close.className = "close-tab"; close.setAttribute("aria-label", "Close tab"); close.textContent = "×"; button.append(favicon, title, close); button.addEventListener("click", (event) => event.target.closest(".close-tab") ? closeTab(tab.id) : switchTab(tab.id)); button.addEventListener("dragstart", () => button.classList.add("dragging")); button.addEventListener("dragend", () => button.classList.remove("dragging")); button.addEventListener("dragover", (event) => event.preventDefault()); button.addEventListener("drop", (event) => { event.preventDefault(); const dragged = document.querySelector(".tab-item.dragging")?.dataset.tabId; if (dragged && dragged !== tab.id) { const from = tabs.findIndex((item) => item.id === dragged); const to = tabs.findIndex((item) => item.id === tab.id); tabs.splice(to, 0, tabs.splice(from, 1)[0]); renderTabs(); } }); return button; })); renderIcons(); }
 function ensureFrame(tab) { if (tab.frame || !engineReady) return; const iframe = document.createElement("iframe"); iframe.title = tab.title; iframe.loading = "eager"; iframe.addEventListener("load", () => { try { const title = iframe.contentDocument?.title; if (title) { tab.title = title; iframe.title = title; const recent = recentPages.find((page) => page.url === tab.url); if (recent) { recent.title = title; localStorage.setItem("polestar-recents", JSON.stringify(recentPages)); renderRecents(); } renderTabs(); } } catch {} }); elements.frames.append(iframe); const utils = window.polestarUtils; tab.frame = controller.createFrame(iframe, { plugins: [new utils.HttpCachePlugin(), new utils.UrlWatcherPlugin((url) => { tab.url = url; tab.title = labelForUrl(url); tab.isNewTab = false; iframe.title = tab.title; rememberPage(url); if (activeTabId === tab.id) elements.address.value = url; renderTabs(); }), new utils.CatchEscapedLinksPlugin((url) => { createTab(url.href); return new URL(location.href); })] }); }
-function navigateTab(tab, url) { if (!url) return; tab.url = url; tab.title = labelForUrl(url); tab.isNewTab = false; rememberPage(url); if (!engineReady) { elements.startPage.classList.add("hidden"); renderTabs(); return; } ensureFrame(tab); tab.frame.go(url); switchTab(tab.id); }
+function navigateTab(tab, url) { if (!url) return; tab.url = url; tab.title = labelForUrl(url); tab.isNewTab = false; rememberPage(url); if (!engineReady) { elements.startPage.classList.remove("hidden"); toast("The proxy is not ready yet. Open Settings to inspect or retry the connection."); renderTabs(); return; } ensureFrame(tab); tab.frame.go(url); switchTab(tab.id); }
 function navigateActive(value) { const url = resolveInput(value); const tab = tabs.find((item) => item.id === activeTabId); if (url && tab) navigateTab(tab, url); }
 function activeFrameAction(action) { const tab = tabs.find((item) => item.id === activeTabId); if (tab?.frame && typeof tab.frame[action] === "function") tab.frame[action](); }
 function toggleBookmark() { const tab = activeTab(); if (!tab?.url || tab.isNewTab) return; const index = bookmarks.findIndex((bookmark) => bookmark.url === tab.url); if (index >= 0) bookmarks.splice(index, 1); else bookmarks.unshift({ url: tab.url, title: tab.title }); localStorage.setItem("polestar-bookmarks", JSON.stringify(bookmarks)); renderBookmarks(); updateBookmarkButton(); }
@@ -99,14 +134,21 @@ async function applySettings() { const next = { ...settings, transport: document
   const save = document.querySelector("#save-settings");
   save.disabled = true;
   try {
-    if (controller && (next.transport !== settings.transport || next.wispUrl !== settings.wispUrl)) {
+    if (engineInitialization) await engineInitialization;
+    next.wispUrl = normalizeWispUrl(next.wispUrl);
+    const changed = next.transport !== settings.transport || next.wispUrl !== settings.wispUrl;
+    if (engineReady && changed) {
+      await probeWisp(next.wispUrl);
       const transport = await createTransport(next);
       controller.setTransport(transport);
+      tabs.forEach((tab) => tab.frame?.reload());
     }
     settings = next;
     localStorage.setItem("polestar-settings", JSON.stringify(settings)); updateDocumentCloak(); applyAppearance(); setStartPlaceholder(); renderRecents(); elements.settings.close();
+    if (!engineReady) await initializeEngine();
   } catch (error) {
-    toast("Could not switch transport. Your previous settings are unchanged.");
+    toast(error.message || "Could not switch transport. Your previous settings are unchanged.");
+    showConnectionError(error);
     console.error("Polestar transport switch failed", error);
   } finally { save.disabled = false; }
 }
@@ -131,26 +173,20 @@ function toast(message) {
   setTimeout(() => notice.remove(), 4000);
 }
 let connectionGeneration = 0;
-function checkWisp() {
+async function checkWisp() {
   const generation = ++connectionGeneration;
-  let socket;
-  const report = (connected) => {
-    if (generation !== connectionGeneration) return;
-    updateStatus(connected && engineReady);
-    if (!connected) {
-      elements.status.querySelector("span").textContent = "Wisp unavailable · check Settings";
-      elements.connection.lastChild.textContent = " Wisp unavailable — check the server URL";
-    }
-  };
   try {
-    socket = new WebSocket(settings.wispUrl);
-    socket.binaryType = "arraybuffer";
-    const timeout = setTimeout(() => { report(false); socket.close(); }, 7000);
-    socket.addEventListener("message", (event) => { const data = new Uint8Array(event.data); if (data[0] === 3) { clearTimeout(timeout); report(true); socket.close(); } });
-    socket.addEventListener("error", () => { clearTimeout(timeout); report(false); });
-  } catch { report(false); }
+    await probeWisp(normalizeWispUrl(settings.wispUrl));
+    if (generation === connectionGeneration) updateStatus(engineReady);
+  } catch (error) { if (generation === connectionGeneration) showConnectionError(error); }
 }
-elements.settings.addEventListener("close", () => { if (engineReady) checkWisp(); });
+elements.settings.addEventListener("close", () => { applyAppearance(); if (engineReady) checkWisp(); });
+document.querySelector("#retry-connection").addEventListener("click", async () => {
+  if (!engineReady) await initializeEngine();
+  else await checkWisp();
+});
+document.querySelector("#use-hosted-wisp").addEventListener("click", () => { elements.wispUrl.value = normalizeWispUrl(""); });
+window.addEventListener("online", () => engineReady ? checkWisp() : initializeEngine());
 
 document.querySelectorAll("[data-url]").forEach((button) => {
   const holder = button.querySelector(".brand,.quick-icon,.bookmark-icon");
